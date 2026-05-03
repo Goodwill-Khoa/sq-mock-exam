@@ -1,0 +1,17 @@
+# Git — SQ Mock Exam project
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary / build
+*.log
+node_modules/
+dist/
