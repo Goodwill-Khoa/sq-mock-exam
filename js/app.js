@@ -72,6 +72,17 @@ const IndexPage = {
     this.renderChart();
   },
 
+  _buildCountOptions(maxCount) {
+    const options = [];
+    for (let n = 10; n <= maxCount; n += 10) options.push(n);
+    if (!options.includes(maxCount)) options.push(maxCount);
+    return options;
+  },
+
+  _startSet(setKey, count) {
+    window.location.href = `exam.html?set=${setKey}&n=${count}`;
+  },
+
   renderSetCards() {
     const grid = document.getElementById('set-grid');
     if (!grid) return;
@@ -89,23 +100,50 @@ const IndexPage = {
       card.className = 'set-card';
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
+      const options = this._buildCountOptions(count);
+      const selectId = `question-count-${key}`;
       card.innerHTML = `
         <div class="set-card-letter" style="color:${meta.color}">${key}</div>
         <div class="set-card-label">${meta.label}</div>
         <div class="set-card-title">${meta.title}</div>
-        <div class="set-card-count">${count} Questions</div>
+        <div class="set-card-count">Up to ${count} Questions</div>
         ${best !== null
           ? `<div class="set-card-best">Best: <span>${best}%</span> · ${attempts.length} attempt${attempts.length > 1 ? 's' : ''}</div>`
           : `<div class="set-card-best" style="color:var(--text-muted)">Not attempted yet</div>`
         }
         ${last ? `<div class="set-card-best" style="margin-top:4px">Last: ${last.pct}% · ${formatTime(last.time)}</div>` : ''}
+        <div class="set-card-controls">
+          <label class="set-card-label" for="${selectId}">Questions</label>
+          <select id="${selectId}" class="question-count-select">
+            ${options.map(n => `<option value="${n}" ${n === count ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm set-card-start" type="button">Start</button>
+        </div>
       `;
-      card.addEventListener('click', () => {
-        window.location.href = `exam.html?set=${key}`;
+
+      const startBtn = card.querySelector('.set-card-start');
+      const countSelect = card.querySelector('.question-count-select');
+      const startExam = () => {
+        const chosen = Number(countSelect?.value) || count;
+        this._startSet(key, chosen);
+      };
+
+      startBtn?.addEventListener('click', e => {
+        e.stopPropagation();
+        startExam();
       });
+
+      countSelect?.addEventListener('click', e => e.stopPropagation());
+      countSelect?.addEventListener('keydown', e => e.stopPropagation());
+      card.addEventListener('click', startExam);
       card.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') window.location.href = `exam.html?set=${key}`;
+        if (e.target !== card) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          startExam();
+        }
       });
+
       grid.appendChild(card);
     });
   },
@@ -123,7 +161,8 @@ const IndexPage = {
       s.attempts.forEach(a => {
         totalAttempts++;
         totalCorrect += a.correct || 0;
-        totalQ += a.total || 50;
+        const attemptTotal = Number.isFinite(a.total) ? Math.max(0, a.total) : 50;
+        totalQ += attemptTotal;
         if (a.pct > bestPct) bestPct = a.pct;
         if (a.time < fastestTime) fastestTime = a.time;
       });
@@ -201,6 +240,7 @@ const IndexPage = {
 // ─────────────────────────────────────────────────────────────────
 const ExamPage = {
   set: null,
+  selectedCount: 50,
   questions: [],
   current: 0,
   answers: {},    // { idx: [selectedOptionIndices] }
@@ -214,6 +254,7 @@ const ExamPage = {
     const params = new URLSearchParams(window.location.search);
     this.set = params.get('set') || 'A';
     this.randomised = params.get('r') === '1';
+    this.selectedCount = Number(params.get('n')) || 50;
 
     const setName = document.getElementById('exam-set-name');
     if (setName) setName.textContent = `${SET_META[this.set]?.label || 'Exam'} — ${SET_META[this.set]?.title || ''}`;
@@ -230,8 +271,10 @@ const ExamPage = {
 
   _loadQuestions() {
     let qs = getSetQuestions(this.set);
+    const maxCount = qs.length;
+    this.selectedCount = clamp(this.selectedCount, 10, maxCount);
     if (this.randomised) qs = shuffleArray(qs);
-    this.questions = qs;
+    this.questions = qs.slice(0, this.selectedCount);
   },
 
   _bindUI() {
@@ -246,7 +289,7 @@ const ExamPage = {
     document.getElementById('modal-cancel')?.addEventListener('click', () => this._closeModal());
     document.getElementById('modal-confirm')?.addEventListener('click', () => { this._closeModal(); this._submitExam(); });
     document.getElementById('btn-retry')?.addEventListener('click', () => {
-      window.location.href = `exam.html?set=${this.set}&r=1`;
+      window.location.href = `exam.html?set=${this.set}&n=${this.selectedCount}&r=1`;
     });
     document.getElementById('btn-review-toggle')?.addEventListener('click', () => {
       const sec = document.getElementById('review-section');
@@ -420,7 +463,7 @@ const ExamPage = {
     const msg = document.getElementById('modal-submit-msg');
     if (msg) {
       msg.textContent = unanswered > 0
-        ? `You have ${unanswered} unanswered question(s). Are you sure you want to submit?`
+        ? `You have ${unanswered} unanswered question(s). They will be skipped and not counted as wrong. Submit anyway?`
         : `You have answered all ${this.questions.length} questions. Ready to submit?`;
     }
     const modal = document.getElementById('modal-submit');
@@ -438,17 +481,22 @@ const ExamPage = {
 
     // Calculate results
     let correct = 0;
+    let answered = 0;
     const results = this.questions.map((q, i) => {
       const sel = this.answers[i] || [];
+      const isSkipped = sel.length === 0;
       const sortedSel = [...sel].sort().join(',');
       const sortedCorrect = [...q.correct].sort().join(',');
-      const isCorrect = sortedSel === sortedCorrect;
+      const isCorrect = !isSkipped && sortedSel === sortedCorrect;
+      if (!isSkipped) answered++;
       if (isCorrect) correct++;
-      return { q, sel, isCorrect };
+      return { q, sel, isCorrect, isSkipped };
     });
 
-    const total = this.questions.length;
-    const pct = Math.round((correct / total) * 100);
+    const totalAsked = this.questions.length;
+    const skipped = totalAsked - answered;
+    const scoredTotal = answered;
+    const pct = scoredTotal > 0 ? Math.round((correct / scoredTotal) * 100) : 0;
 
     // Save stats
     const stats = loadStats();
@@ -456,19 +504,22 @@ const ExamPage = {
     stats[this.set].attempts.push({
       date: new Date().toISOString(),
       correct,
-      total,
+      total: scoredTotal,
+      asked: totalAsked,
+      skipped,
       pct,
       time: this.timerSecs,
       randomised: this.randomised,
+      selectedCount: this.selectedCount,
     });
     saveStats(stats);
 
     // Render results
-    this._renderResults(results, correct, total, pct);
+    this._renderResults(results, correct, scoredTotal, pct, skipped, totalAsked);
     this._showState('results');
   },
 
-  _renderResults(results, correct, total, pct) {
+  _renderResults(results, correct, scoredTotal, pct, skipped, totalAsked) {
     // Ring
     const ring = document.getElementById('score-ring-progress');
     if (ring) {
@@ -480,7 +531,7 @@ const ExamPage = {
     const pctEl = document.getElementById('score-pct');
     const fracEl = document.getElementById('score-fraction');
     if (pctEl) pctEl.textContent = `${pct}%`;
-    if (fracEl) fracEl.textContent = `${correct}/${total}`;
+    if (fracEl) fracEl.textContent = `${correct}/${scoredTotal || 0}`;
 
     // Label / title
     const lbl = document.getElementById('result-set-label');
@@ -488,16 +539,22 @@ const ExamPage = {
     const title = document.getElementById('result-title');
     if (title) title.textContent = pct >= 70 ? '🎉 Great Work!' : pct >= 50 ? '📚 Keep Practising!' : '💪 More Study Needed';
     const sub = document.getElementById('result-sub');
-    if (sub) sub.textContent = `Completed in ${formatTime(this.timerSecs)} · ${pct >= 70 ? 'Passed' : 'Not yet at pass threshold (70%)'}`;
+    if (sub) {
+      const scoreContext = scoredTotal > 0
+        ? `Scored on ${scoredTotal}/${totalAsked} answered question(s)`
+        : `No answered questions (all skipped)`;
+      sub.textContent = `Completed in ${formatTime(this.timerSecs)} · ${scoreContext} · ${pct >= 70 ? 'Passed' : 'Not yet at pass threshold (70%)'}`;
+    }
 
     // Stat grid
     const statsGrid = document.getElementById('result-stats');
     if (statsGrid) {
-      const wrong = total - correct;
+      const wrong = scoredTotal - correct;
       const multi = results.filter(r => r.q.type === 'multi').length;
       statsGrid.innerHTML = `
         <div class="result-stat good"><div class="result-stat-value">${correct}</div><div class="result-stat-label">Correct</div></div>
         <div class="result-stat bad"><div class="result-stat-value">${wrong}</div><div class="result-stat-label">Incorrect</div></div>
+        <div class="result-stat info"><div class="result-stat-value">${skipped}</div><div class="result-stat-label">Skipped</div></div>
         <div class="result-stat info"><div class="result-stat-value">${formatTime(this.timerSecs)}</div><div class="result-stat-label">Time</div></div>
         <div class="result-stat warn"><div class="result-stat-value">${multi}</div><div class="result-stat-label">Multi-choice Qs</div></div>
       `;
@@ -556,28 +613,39 @@ const ExamPage = {
 
     this.questions.forEach((q, i) => {
       const sel = this.answers[i] || [];
+      const isSkipped = sel.length === 0;
       const sortedSel = [...sel].sort().join(',');
       const sortedCorrect = [...q.correct].sort().join(',');
-      const isCorrect = sortedSel === sortedCorrect;
+      const isCorrect = !isSkipped && sortedSel === sortedCorrect;
 
       const item = document.createElement('div');
-      item.className = `review-item ${isCorrect ? 'correct-q' : 'incorrect-q'}`;
+      item.className = `review-item ${isSkipped ? 'skipped-q' : (isCorrect ? 'correct-q' : 'incorrect-q')}`;
 
       const selectedLabels = sel.map(idx => q.options[idx]).join('; ') || '(no answer)';
       const correctLabels = q.correct.map(idx => q.options[idx]).join('; ');
 
+      let answerBlock = '';
+      if (isSkipped) {
+        answerBlock = `
+          <div class="review-your-answer">Your answer: <span>(skipped)</span></div>
+          <div class="review-correct-answer">Correct answer: <span>${esc(correctLabels)}</span></div>
+        `;
+      } else if (!isCorrect) {
+        answerBlock = `
+          <div class="review-your-answer">Your answer: <span>${esc(selectedLabels)}</span></div>
+          <div class="review-correct-answer">Correct answer: <span>${esc(correctLabels)}</span></div>
+        `;
+      } else {
+        answerBlock = `<div class="review-correct-answer">Correct: <span>${esc(correctLabels)}</span></div>`;
+      }
+
       item.innerHTML = `
         <div class="review-item-header">
-          <span class="review-status-icon">${isCorrect ? '✅' : '❌'}</span>
+          <span class="review-status-icon">${isSkipped ? '⏭️' : (isCorrect ? '✅' : '❌')}</span>
           <span class="question-number" style="font-size:.7rem">Q${i + 1}</span>
           <span class="review-question-text">${esc(q.question)}</span>
         </div>
-        ${!isCorrect ? `
-          <div class="review-your-answer">Your answer: <span>${esc(selectedLabels)}</span></div>
-          <div class="review-correct-answer">Correct answer: <span>${esc(correctLabels)}</span></div>
-        ` : `
-          <div class="review-correct-answer">Correct: <span>${esc(correctLabels)}</span></div>
-        `}
+        ${answerBlock}
         <div class="review-explanation">${esc(q.explanation)}</div>
       `;
       list.appendChild(item);

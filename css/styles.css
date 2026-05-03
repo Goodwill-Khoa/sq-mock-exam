@@ -226,6 +226,36 @@ h3 { font-size: 1.15rem; font-weight: 600; }
 }
 .set-card-best span { color: var(--success); font-weight: 700; }
 
+.set-card-controls {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+}
+
+.question-count-select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: .82rem;
+  min-width: 72px;
+}
+
+.question-count-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.set-card-start {
+  margin-left: auto;
+}
+
 /* ── Stats Section ────────────────────────────────────────────── */
 .stats-section { margin: 48px 0 32px; }
 .stats-section h2 { margin-bottom: 20px; }
@@ -506,6 +536,7 @@ h3 { font-size: 1.15rem; font-weight: 600; }
 }
 .review-item.correct-q  { border-left-color: var(--success); }
 .review-item.incorrect-q{ border-left-color: var(--danger);  }
+.review-item.skipped-q  { border-left-color: var(--warning); }
 
 .review-item-header {
   display: flex;
